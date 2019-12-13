@@ -1,49 +1,17 @@
 #include <Arduino.h>
+#include "Program.h"
 #include "FastLED.h"
 
 #define DATA_PIN 2
 #define UNPLUGGED_INTERUPT 3
-#define NUM_LEDS 84
-
 CRGB leds[NUM_LEDS];
-static CLEDController *controller = &FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
+CLEDController *controller = &FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
 
-static uint8_t brightness = 0;
+uint8_t brightness = 0;
 static void isrBarrelJackChange();
 
-static void programChase(bool);
-static void programHueSolid();
-static void programHueCircle();
-static void programSeizureWarning();
-
 #define MAX_PROGRAMS 20
-static int current_program = 7;
-static struct ProgramDetails
-{
-  const char *PROGMEM description;
-  void (*function)();
-} programs[MAX_PROGRAMS] = {
-    {"Red", []() {
-       controller->showColor(CRGB::Red, brightness);
-       delay(100);
-     }},
-    {"Blue", []() {
-       controller->showColor(CRGB::Blue, brightness);
-       delay(100);
-     }},
-    {"Green", []() {
-       controller->showColor(CRGB::Green, brightness);
-       delay(100);
-     }},
-    {"White", []() { 
-      controller->showColor(CRGB::White, brightness);
-      delay(100); }},
-    {"Chase", []() { programChase(true); }},
-    {"Chase Rev", []() { programChase(false); }},
-    {"Hue Solid", programHueSolid},
-    {"Hue Circle", programHueCircle},
-    {"Seizure Warning", programSeizureWarning},
-    {NULL}};
+static int currentProgram = 0;
 
 void setup()
 {
@@ -52,6 +20,18 @@ void setup()
 
   isrBarrelJackChange();
   attachInterrupt(digitalPinToInterrupt(UNPLUGGED_INTERUPT), isrBarrelJackChange, CHANGE);
+
+  programs.printPrograms();
+
+  /* Workaround - For now select Hue Circle */
+  for (int cntr = 0; cntr < programs.length(); ++cntr)
+  {
+    Program *program = programs[cntr];
+    if (String("Hue Circle") == program->getDescription())
+    {
+      currentProgram = cntr;
+    }
+  }
 }
 
 /* Detect when power is plugged in or unplugged */
@@ -75,94 +55,57 @@ void isrBarrelJackChange()
   controller->showLeds(brightness);
 }
 
+void printPrograms() {
+
+}
+
+int processSerial()
+{
+  static const int BUF_SIZE = 4;
+  static String serialBuf;
+  static bool init = true;
+  if (init)
+  {
+    init = false;
+    serialBuf.reserve(BUF_SIZE);
+  }
+  while (Serial.available())
+  {
+    char rx = Serial.read();
+    int length = serialBuf.length();
+    if (length > 0 && rx == '\010') /* Backspace */
+    {
+      serialBuf.remove(serialBuf.length() - 1);
+    }
+    else if (length > 0 && rx == '\n') /* Newline */
+    {
+      int i = serialBuf.toInt();
+      serialBuf = "";
+      return i;
+    }
+    else if (serialBuf.length() < BUF_SIZE)
+    {
+      if (rx >= '0' && rx <= '9')
+      {
+        serialBuf += rx;
+      }
+    }
+  }
+
+  return -1;
+}
+
 void loop()
 {
-  String s = Serial.readString();
-  if(s.length() > 0)
+  int num = processSerial();
+  if (num >= 0 && num < programs.length())
   {
-    Serial.println(s);
-    Serial.println(s.toInt());
-    current_program = s.toInt();
+    currentProgram = num;
+    auto program = programs[currentProgram];
+    char buf[80] = "";
+    sprintf_P(buf, PSTR("Selecting %d: %s"), num, program->getDescription().c_str());
+    Serial.println(buf);
   }
-  ProgramDetails &program = programs[current_program];
-  if (program.function)
-  {
-    program.function();
-  }
-}
-
-void programChase(bool dir)
-{
-  /* Chasing around the case */
-  static int cntr = 0;
-  if (dir)
-  {
-    ++cntr;
-  }
-  else
-  {
-    --cntr;
-  }
-
-  if (cntr >= NUM_LEDS)
-  {
-    cntr = 0;
-  }
-  else if (cntr < 0)
-  {
-    cntr = NUM_LEDS - 1;
-  }
-
-  CRGB color = CRGB::White;
-  for (int i = 0; i < NUM_LEDS; ++i)
-  {
-    leds[i] /= 2;
-  }
-  leds[cntr] = color;
-  controller->showLeds(brightness);
-  delay(30);
-}
-
-void programHueSolid()
-{
-  /* Cycle through hue */
-  static CHSV color = {0, 255, 255};
-  color.h += 1;
-  controller->showColor(color, brightness);
-  delay(30);
-}
-
-void programHueCircle()
-{
-  static int start = 0;
-  if (start >= NUM_LEDS)
-    start = 0;
-
-  for (int cntr = 0; cntr < NUM_LEDS; ++cntr)
-  {
-    int spot = cntr - start;
-    if (spot < 0)
-    {
-      spot += NUM_LEDS;
-    }
-    CHSV color = {
-        static_cast<byte>(0xFF & ((spot << 8) / (NUM_LEDS - 1))),
-        255,
-        255};
-    leds[cntr] = color;
-  }
-  start += 1;
-  delay(25);
-  controller->showLeds(brightness);
-}
-
-void programSeizureWarning()
-{
-  /* RGB Seizure */
-  controller->showColor(CRGB::Red, brightness);
-  delay(60);
-  controller->showColor(CRGB::Green, brightness);
-  delay(60);
-  controller->showColor(CRGB::Blue, brightness);
-  delay(60);
+  auto program = programs[currentProgram];
+  program->loop();
 }
