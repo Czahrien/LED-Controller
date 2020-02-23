@@ -1,5 +1,19 @@
 #include "Program.h"
 
+Program::Program(const String &description, const uint16_t delay) : description(description), loopDelay(delay) {}
+String Program::getDescription() {
+    return description;
+}
+void Program::setDelay(uint16_t ms)
+{
+    loopDelay = ms;
+}
+uint16_t Program::getDelay()
+{
+    return loopDelay;
+}
+
+
 class RedProgram : public RegisterProgram<RedProgram>
 {
     public:
@@ -7,7 +21,7 @@ class RedProgram : public RegisterProgram<RedProgram>
     void loop()
     {
         controller->showColor(CRGB::Red, brightness);
-        delay(250);
+        delay(loopDelay);
     }
 };
 
@@ -18,7 +32,7 @@ class BlueProgram : public RegisterProgram<BlueProgram>
     void loop()
     {
         controller->showColor(CRGB::Blue, brightness);
-        delay(250);
+        delay(loopDelay);
     }
 };
 
@@ -29,11 +43,11 @@ class GreenProgram : public RegisterProgram<GreenProgram>
     void loop()
     {
         controller->showColor(CRGB::Green, brightness);
-        delay(250);
+        delay(loopDelay);
     }
 };
 
-void programChase(bool dir)
+void programChase(bool dir, int loopDelay)
 {
     /* Chasing around the case */
     static int cntr = 0;
@@ -55,14 +69,15 @@ void programChase(bool dir)
         cntr = NUM_LEDS - 1;
     }
 
-    CRGB color = CRGB::White;
     for (int i = 0; i < NUM_LEDS; ++i)
     {
         leds[i] /= 2;
     }
-    leds[cntr] = color;
+    leds[cntr] = CRGB::Red;
+    leds[(NUM_LEDS / 3 + cntr) % NUM_LEDS] = CRGB::Green;
+    leds[(2 * NUM_LEDS / 3 + cntr) % NUM_LEDS] = CRGB::Blue;
     controller->showLeds(brightness);
-    delay(30);
+    delay(loopDelay);
 }
 
 class ChaseProgram : public RegisterProgram<ChaseProgram>
@@ -71,7 +86,7 @@ class ChaseProgram : public RegisterProgram<ChaseProgram>
     ChaseProgram() : RegisterProgram<ChaseProgram>("Chase") {}
     void loop()
     {
-        programChase(true);
+        programChase(true, loopDelay);
     }
 };
 
@@ -81,7 +96,7 @@ class ChaseReverseProgram : public RegisterProgram<ChaseReverseProgram>
     ChaseReverseProgram() : RegisterProgram<ChaseReverseProgram>("Chase Reverse") {}
     void loop()
     {
-        programChase(false);
+        programChase(true, loopDelay);
     }
 };
 
@@ -93,11 +108,11 @@ class SeizureWarning : public RegisterProgram<SeizureWarning>
     {
         /* RGB Seizure */
         controller->showColor(CRGB::Red, brightness);
-        delay(60);
+        delay(loopDelay);
         controller->showColor(CRGB::Green, brightness);
-        delay(60);
+        delay(loopDelay);
         controller->showColor(CRGB::Blue, brightness);
-        delay(60);
+        delay(loopDelay);
     }
 };
 
@@ -111,7 +126,7 @@ class HueSolid : public RegisterProgram<HueSolid>
         static CHSV color = {0, 255, 255};
         color.h += 1;
         controller->showColor(color, brightness);
-        delay(30);
+        delay(loopDelay);
     }
 };
 
@@ -121,26 +136,31 @@ class HueCircle : public RegisterProgram<HueCircle>
     HueCircle() : RegisterProgram<HueCircle>("Hue Circle") {}
     void loop()
     {
-        static int start = 0;
-        if (start >= NUM_LEDS)
-        {
-            start = 0;
-        }
-
+        static uint8_t offset = 0;
         for (int cntr = 0; cntr < NUM_LEDS; ++cntr)
         {
-            int spot = cntr - start;
-            if (spot < 0)
-            {
-                spot += NUM_LEDS;
-            }
             CHSV color = {
-                static_cast<byte>(0xFF & ((spot << 8) / (NUM_LEDS - 1))),
+                offset + static_cast<byte>(0xFF & ((cntr << 8) / (NUM_LEDS - 1))),
                 255,
                 255};
             leds[cntr] = color;
         }
-        delay(25);
+        controller->showLeds(brightness);
+        ++offset;
+        delay(loopDelay);
+    }
+};
+
+class Hertz : public RegisterProgram<Hertz>
+{
+    public:
+    Hertz() : RegisterProgram<Hertz>("Hertz") {}
+    void loop()
+    {
+        controller->showColor(CRGB::White);
+        delay(loopDelay/2);
+        controller->showColor(CRGB {0,0,0});
+        delay(loopDelay/2);
     }
 };
 
@@ -180,4 +200,9 @@ void ProgramRegistry::printPrograms() const
     sprintf_P(buf, PSTR("%d: %s"), cntr, program->getDescription().c_str());
     Serial.println(buf);
   }
+}
+
+int ProgramRegistry::length() const 
+{
+    return this->programCount;
 }

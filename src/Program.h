@@ -14,15 +14,16 @@ extern uint8_t brightness;
  */
 class Program {
     protected:
-    Program(const String &description) : description(description) {}
+    Program(const String &description, const uint16_t delay = 100);
     public:
     virtual void loop() = 0;
-    virtual String getDescription() {
-        return description;
-    }
+    String getDescription();
+    void setDelay(uint16_t ms);
+    uint16_t getDelay();
 
     protected:
     String description;
+    uint16_t loopDelay;
 };
 
 /**

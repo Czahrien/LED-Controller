@@ -1,14 +1,30 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 #include "Program.h"
 #include "FastLED.h"
 
+/**
+ * @brief Data Pin for the LEDs
+ */
 #define DATA_PIN 2
-#define UNPLUGGED_INTERUPT 3
+/**
+ * @brief Pin brought high when the barrel jack is unplugged
+ */
+//#define UNPLUGGED_INTERRUPT 3
+/**
+ * @brief Array behind all of the LEDs
+ */
 CRGB leds[NUM_LEDS];
+/**
+ * @brief Controller object for an array of WS2812B LEDs
+ */
 CLEDController *controller = &FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
 
 uint8_t brightness = 0;
 static void isrBarrelJackChange();
+
+static void save();
+static void load();
 
 #define MAX_PROGRAMS 20
 static int currentProgram = 0;
@@ -18,26 +34,24 @@ void setup()
   Serial.begin(9600);
   Serial.setTimeout(0);
 
+#ifdef UNPLUGGED_INTERRUPT
   isrBarrelJackChange();
-  attachInterrupt(digitalPinToInterrupt(UNPLUGGED_INTERUPT), isrBarrelJackChange, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(UNPLUGGED_INTERRUPT), isrBarrelJackChange, CHANGE);
+#else
+  brightness = 255;
+  controller->showLeds(brightness);
+#endif
 
   programs.printPrograms();
 
-  /* Workaround - For now select Hue Circle */
-  for (int cntr = 0; cntr < programs.length(); ++cntr)
-  {
-    Program *program = programs[cntr];
-    if (String("Hue Circle") == program->getDescription())
-    {
-      currentProgram = cntr;
-    }
-  }
+  load();
 }
 
+#ifdef UNPLUGGED_INTERRUPT
 /* Detect when power is plugged in or unplugged */
 void isrBarrelJackChange()
 {
-  int val = digitalRead(UNPLUGGED_INTERUPT);
+  int val = digitalRead(UNPLUGGED_INTERRUPT);
 
   /* Use the built-in LED as a visble indicator */
   digitalWrite(LED_BUILTIN, val);
@@ -54,6 +68,7 @@ void isrBarrelJackChange()
   }
   controller->showLeds(brightness);
 }
+#endif
 
 void printPrograms() {
 
@@ -89,6 +104,46 @@ int processSerial()
       {
         serialBuf += rx;
       }
+      else if(rx == '+' || rx == '=')
+      {
+        uint16_t newDelay = programs[currentProgram]->getDelay();
+        newDelay <<= 1;
+        if(newDelay > 256)
+        {
+          newDelay = 256;
+        }
+        else if(newDelay <= 0)
+        {
+          newDelay = 1;
+        }
+        programs[currentProgram]->setDelay(newDelay);
+        Serial.println(newDelay);
+        return -2;
+      }
+      else if(rx == ']' || rx == '}')
+      {
+        uint16_t newDelay = programs[currentProgram]->getDelay();
+        newDelay += newDelay / 10;
+        programs[currentProgram]->setDelay(newDelay);
+        Serial.println(newDelay);
+        return -2;
+      }
+      else if(rx == '-' || rx == '_')
+      {
+        uint16_t newDelay = programs[currentProgram]->getDelay();
+        newDelay >>= 1;
+        programs[currentProgram]->setDelay(newDelay);
+        Serial.println(newDelay);
+        return -2;
+      }
+      else if(rx == '[' || rx == '{')
+      {
+        uint16_t newDelay = programs[currentProgram]->getDelay();
+        newDelay -= newDelay / 10;
+        programs[currentProgram]->setDelay(newDelay);
+        Serial.println(newDelay);
+        return -2;
+      }
     }
   }
 
@@ -106,6 +161,55 @@ void loop()
     sprintf_P(buf, PSTR("Selecting %d: %s"), num, program->getDescription().c_str());
     Serial.println(buf);
   }
+  
+  if(num != -1)
+  {
+    save();
+  }
+  
   auto program = programs[currentProgram];
   program->loop();
+}
+
+struct EepromData {
+  unsigned long int magic;
+  int currentProgram;
+  struct {
+    uint16_t delay;
+  } data[REGISTRY_SIZE];
+};
+
+#define MAGIC 0x11223344
+
+void save() 
+{
+  EepromData data = {MAGIC};
+  data.currentProgram = currentProgram;
+  for(int i = 0; i < programs.length(); ++i)
+  {
+    data.data[i] = {
+      programs[i]->getDelay()
+    };
+  }
+  EEPROM.put(0, data);
+}
+
+void load()
+{
+  EepromData data = {};
+  EEPROM.get(0, data);
+  if(data.magic != MAGIC)
+  {
+    save();
+    return;
+  }
+
+  if (data.currentProgram > 0 && data.currentProgram < programs.length())
+  {
+    currentProgram = data.currentProgram;
+  }
+  for (int i = 0; i < programs.length(); ++i)
+  {
+    programs[i]->setDelay(data.data[i].delay);
+  }
 }
